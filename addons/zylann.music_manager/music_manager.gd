@@ -1,43 +1,5 @@
 extends Node
 
-# Allows to play audio streams and ability to cross-fade them in various ways.
-
-#-----------------------------------------------------------------------------
-# Public API
-#-----------------------------------------------------------------------------
-
-# Plays a stream without any fading.
-func play(stream, offset=0):
-	fade(stream, null, null, null)
-
-# Play a stream with fading between previous streams.
-# stream (string or AudioStream): which stream to play next. If null, nothing will play next.
-# prev_duration (float): duration of previous tracks fade-out. If null, will stop directly.
-# next_duration (float): duration of next track fade-in. If null, will have full volume directly.
-# next_delay (float): delay in second before which the next track will start.
-# offset (int): sent to StreamPlayer.play()
-func fade(stream, prev_duration, next_duration=null, next_delay=0.0, offset=0):
-	if typeof(stream) == TYPE_STRING:
-		stream = load(stream)
-	var next_track = null
-	if stream != null:
-		# Fade in next track
-		next_track = _get_free_track(stream)
-		_fade_in(next_track, next_duration, next_delay, stream, offset)
-	# Fade out whatever was playing before
-	for other_track in _tracks:
-		if other_track != next_track and other_track.is_active():
-			_fade_out(other_track, prev_duration)
-
-
-func stop_all():
-	for track in _tracks:
-		track.stop()
-
-#-----------------------------------------------------------------------------
-# Private
-#-----------------------------------------------------------------------------
-
 class Track:
 	var player = null
 	var fade_speed = null
@@ -46,7 +8,7 @@ class Track:
 	var play_offset = 0
 	
 	func is_active():
-		return player.is_playing() or (wait_time != null)
+		return (player.get_volume() > 0) and player.is_playing()
 	
 	func stop():
 		player.stop()
@@ -54,20 +16,38 @@ class Track:
 		wait_time = null
 		fade_value = 0.0
 
+#----------------------------------------------------------------------------
+# Private
+#-----------------------------------------------------------------------------
 
+var _streams = {}
 var _tracks = []
 var _volume = 1.0
-
 
 func _ready():
 	set_process(true)
 
+func _get_stream(stream_path):
+	var stream = null
+	
+	# Check if we already have this stream loaded
+	for path in _streams.keys():
+		if path == stream_path:
+			stream = _streams[path]
+			break
+	
+	if stream == null:
+		_streams[stream_path] = load(stream_path)
+		stream = _streams[stream_path]
+	
+	return stream
 
-func _fade_in(track, duration, delay, stream, offset=0):
+func _fade_in(track, duration, delay, stream, offset = 0):
 	if stream != null:
 		track.player.set_stream(stream)
 	
 	track.wait_time = delay
+	
 	if delay == null:
 		track.player.play(offset)
 	else:
@@ -81,7 +61,6 @@ func _fade_in(track, duration, delay, stream, offset=0):
 		track.fade_speed = 1.0 / duration
 		track.player.set_volume(track.fade_value)
 
-
 func _fade_out(track, duration):
 	if track.wait_time != null:
 		track.stop()
@@ -93,7 +72,6 @@ func _fade_out(track, duration):
 		else:
 			track.fade_speed = -1.0 / duration
 			track.player.set_volume(track.fade_value)
-
 
 func _process(delta):
 	for track in _tracks:
@@ -116,7 +94,6 @@ func _process(delta):
 			else:
 				track.wait_time = t
 
-
 func _get_free_track(stream):
 	if stream != null:
 		# First find a track that plays our song already
@@ -134,3 +111,46 @@ func _get_free_track(stream):
 	_tracks.append(track)
 	return track
 
+# Allows to play audio streams and ability to cross-fade them in various ways.
+
+#-----------------------------------------------------------------------------
+# Public API
+#-----------------------------------------------------------------------------
+
+# Plays a stream without any fading.
+func play(stream, offset = 0):
+	fade(stream, null, null, null, offset)
+
+# Play a stream with fading between previous streams.
+# stream_path (string): which stream to play next. If null, nothing will play next.
+# fade_out_duration (float): duration of previous tracks fade-out. If null, will stop directly.
+# fade_in_duration (float): duration of next track fade-in. If null, will have full volume directly.
+# delay_start (float): delay in second before which the next track will start.
+# offset (int): sent to StreamPlayer.play()
+func fade(stream_path, fade_out_duration, fade_in_duration = null, delay_start = 0.0, offset = 0):
+	# stream type must be string
+	if not typeof(stream_path) == TYPE_STRING:
+		return
+	
+	var stream = _get_stream(stream_path)
+	
+	for track in _tracks:
+		if track.player.get_stream() == stream and track.is_active():
+			return
+	
+	var next_track = null
+	
+	if stream != null:
+		# Fade in next track
+		next_track = _get_free_track(stream)
+		
+		_fade_in(next_track, fade_in_duration, delay_start, stream, offset)
+	
+	# Fade out whatever was playing before
+	for other_track in _tracks:
+		if other_track != next_track and other_track.is_active():
+			_fade_out(other_track, fade_out_duration)
+
+func stop_all():
+	for track in _tracks:
+		track.stop()
